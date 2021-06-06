@@ -215,7 +215,26 @@ function $SceDelegateProvider() {
     }
     return trustedResourceUrlList;
   };
-  this.resourceUrlWhitelist = this.trustedResourceUrlList;
+
+  /**
+   * @ngdoc method
+   * @name $sceDelegateProvider#resourceUrlWhitelist
+   * @kind function
+   *
+   * @deprecated
+   * sinceVersion="1.8.1"
+   *
+   * This method is deprecated. Use {@link $sceDelegateProvider#trustedResourceUrlList
+   * trustedResourceUrlList} instead.
+   */
+  Object.defineProperty(this, 'resourceUrlWhitelist', {
+    get: function() {
+      return this.trustedResourceUrlList;
+    },
+    set: function(value) {
+      this.trustedResourceUrlList = value;
+    }
+  });
 
   /**
    * @ngdoc method
@@ -242,7 +261,6 @@ function $SceDelegateProvider() {
    * The **default value** when no trusted resource URL list has been explicitly set is the empty
    * array (i.e. there is no `bannedResourceUrlList`.)
    */
-
   this.bannedResourceUrlList = function(value) {
     if (arguments.length) {
       bannedResourceUrlList = adjustMatchers(value);
@@ -258,7 +276,7 @@ function $SceDelegateProvider() {
    * @deprecated
    * sinceVersion="1.8.1"
    *
-   * This function is deprecated. Use {@link $sceDelegateProvider#bannedResourceUrlList
+   * This method is deprecated. Use {@link $sceDelegateProvider#bannedResourceUrlList
    * bannedResourceUrlList} instead.
    */
   Object.defineProperty(this, 'resourceUrlBlacklist', {

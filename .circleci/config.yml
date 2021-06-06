@@ -28,7 +28,7 @@ executors:
         type: string
         default: medium
     docker:
-      - image: circleci/node:12.16.3@sha256:8fe514dae7585bbee1c64bf5a6cd4dcdf393316b5c87565b47e31014872c8860
+      - image: circleci/node:14.16.1@sha256:b094e85848b43209ca83d9bb114d406fe62c75cb73b18c9d8eb1a9c6462c97d4
     resource_class: << parameters.resource_class >>
     working_directory: ~/ng
   cloud-sdk:
@@ -51,6 +51,17 @@ var-filter-run-always: &run-always
       only: /.*/
     tags:
       only: /v1\.\d+\.\d.*/
+
+# Filter to run a job when code might need to be deployed - i.e. on builds for the `master` branch.
+# (Further checks are needed to determine whether a deployment is actually needed, but these are not
+# possible via filters.)
+var-filter-run-on-master: &run-on-master
+  filters:
+    branches:
+      only:
+        - master
+    tags:
+      ignore: /.*/
 
 # Filter to run a job when code/docs might need to be deployed - i.e. on tagged builds and on builds
 # for master and `v1.*.x` branches.
@@ -346,13 +357,13 @@ jobs:
           paths:
             - ./ng
 
-  # The `deploy-code` job should only run when all of these conditions are true for the build:
+  # The `deploy-code-files` job should only run when all of these conditions are true for the build:
   # - It is for the `angular/angular.js` repository (not a fork).
   # - It is not for a pull request.
   # - It is for a tag or the master branch or the stable branch(*).
   #
   # *: The stable branch is the one that has the value `latest` in `package.json > distTag`.
-  deploy-code:
+  deploy-code-files:
     executor:
       name: cloud-sdk
     steps:
@@ -360,7 +371,7 @@ jobs:
       - custom_attach_workspace
       - init_environment
       - skip_unless_tag_or_master_or_stable_branch
-      - run: ls deploy/code
+      - run: ls scripts/code.angularjs.org-firebase/deploy
       - run:
           name: Authenticate and configure Docker
           command: |
@@ -369,7 +380,35 @@ jobs:
       - run:
           name: Sync files to code.angularjs.org
           command: |
-            gsutil -m rsync -r deploy/code gs://code-angularjs-org-338b8.appspot.com
+            gsutil -m rsync -r scripts/code.angularjs.org-firebase/deploy gs://code-angularjs-org-338b8.appspot.com
+
+  # The `deploy-code-firebase` job should only run when all of these conditions are true for the build:
+  # - It is for the `angular/angular.js` repository (not a fork).
+  # - It is not for a pull request.
+  # - It is for the master branch.
+  #   (This is enforced via job filters, so we don't need to a step to check it here.)
+  deploy-code-firebase:
+    executor:
+      name: default-executor
+    steps:
+      - skip_on_pr_and_fork_builds
+      - custom_attach_workspace
+      - init_environment
+        # Install dependencies for Firebase functions to prevent parsing errors during deployment.
+        # See https://github.com/angular/angular.js/pull/16453.
+      - run:
+          name: Install dependencies in `scripts/code.angularjs.org-firebase/functions/`.
+          working_directory: scripts/code.angularjs.org-firebase/functions
+          command: yarn install --frozen-lockfile --ignore-engines --non-interactive
+      - run:
+          name: Deploy to Firebase from `scripts/code.angularjs.org-firebase/`.
+          working_directory: scripts/code.angularjs.org-firebase
+          command: |
+            # Do not use `yarn firebase` as that causes the Firebase CLI to look for `firebase.json`
+            # in the root directory, even if run from inside `scripts/code.angularjs.org-firebase/`.
+            firebase=$(yarn bin)/firebase
+            $firebase use
+            $firebase deploy --message "Commit:\ $CI_COMMIT" --non-interactive --token "$FIREBASE_TOKEN"
 
   # The `deploy-docs` job should only run when all of these conditions are true for the build:
   # - It is for the `angular/angular.js` repository (not a fork).
@@ -385,10 +424,21 @@ jobs:
       - custom_attach_workspace
       - init_environment
       - skip_unless_stable_branch
-        # Install dependencies for Firebase functions to prevent parsing errors during deployment
-        # See https://github.com/angular/angular.js/pull/16453
-      - run: yarn --cwd scripts/docs.angularjs.org-firebase/functions --ignore-engines
-      - run: yarn firebase deploy --message  "Commit:\ $CI_COMMIT" --non-interactive --only hosting --project "docs-angularjs-org-9p2" --token "$FIREBASE_TOKEN"
+        # Install dependencies for Firebase functions to prevent parsing errors during deployment.
+        # See https://github.com/angular/angular.js/pull/16453.
+      - run:
+          name: Install dependencies in `scripts/docs.angularjs.org-firebase/functions/`.
+          working_directory: scripts/docs.angularjs.org-firebase/functions
+          command: yarn install --frozen-lockfile --ignore-engines --non-interactive
+      - run:
+          name: Deploy to Firebase from `scripts/docs.angularjs.org-firebase/`.
+          working_directory: scripts/docs.angularjs.org-firebase
+          command: |
+            # Do not use `yarn firebase` as that causes the Firebase CLI to look for `firebase.json`
+            # in the root directory, even if run from inside `scripts/docs.angularjs.org-firebase/`.
+            firebase=$(yarn bin)/firebase
+            $firebase use
+            $firebase deploy --message "Commit:\ $CI_COMMIT" --non-interactive --token "$FIREBASE_TOKEN"
 
 workflows:
   version: 2
@@ -445,8 +495,12 @@ workflows:
              - e2e-test-jquery-1
              - e2e-test-jquery-2a
              - e2e-test-jquery-2b
-      - deploy-code:
+      - deploy-code-files:
           <<: *run-on-tags-and-master-and-version-branches
+          requires:
+             - prepare-deployment
+      - deploy-code-firebase:
+          <<: *run-on-master
           requires:
              - prepare-deployment
       - deploy-docs:
